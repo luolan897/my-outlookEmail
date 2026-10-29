@@ -30,7 +30,8 @@ Why an adapter instead of using libsql directly:
     application keeps working unchanged. It deliberately covers only the
     sqlite3 surface the application actually uses (execute, executemany,
     executescript, commit, rollback, close, context manager, lastrowid,
-    rowcount, description, fetchone/fetchall/fetchmany, PRAGMA passthrough).
+    rowcount, total_changes, description, fetchone/fetchall/fetchmany,
+    PRAGMA passthrough).
 """
 
 from __future__ import annotations
@@ -343,6 +344,23 @@ class Connection:
     @property
     def in_transaction(self):
         return self._conn.in_transaction
+
+    @property
+    def total_changes(self):
+        """Cumulative row changes on this connection, like sqlite3.
+
+        Implemented with SQLite's total_changes() SQL function, which the
+        libsql engine provides. It counts INSERT/UPDATE/DELETE rows since
+        the connection opened: DDL and SELECTs don't count, skipped
+        INSERT OR IGNORE rows don't count, and a later ROLLBACK does not
+        decrement it. Application code relies on exactly those semantics
+        when it compares total_changes before/after an INSERT OR IGNORE
+        to tell a fresh insert apart from a skipped duplicate.
+        """
+        cursor = self.cursor()
+        cursor.execute("SELECT total_changes()")
+        row = cursor.fetchone()
+        return int(row[0]) if row is not None else 0
 
 
 def connect_database(**_kwargs) -> Connection:
