@@ -787,8 +787,8 @@ TEMP_EMAIL_GROUP_ID = -1
 export_verify_tokens = {}
 
 # OAuth 配置
-OAUTH_CLIENT_ID = os.getenv("OAUTH_CLIENT_ID", "9e5f94bc-e8a4-4e73-b8be-63364c29d753")
-OAUTH_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8080")
+OAUTH_CLIENT_ID = os.getenv("OAUTH_CLIENT_ID", "856653f0-eca8-4ebf-aab6-6f66b6c825ba")
+OAUTH_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "https://yukimail.sylu.cc/token-tool/callback")
 # Graph 委托权限（读信 / 邮件管理和发信 / 基本用户信息）
 OAUTH_GRAPH_SCOPES = [
     "https://graph.microsoft.com/Mail.Read",
