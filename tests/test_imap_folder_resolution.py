@@ -2847,6 +2847,9 @@ class RefreshTokenProxyFallbackTests(unittest.TestCase):
                     expected = '刷新成功，Token 已更新' if rotated else '验证成功，Token 未轮换，继续使用原 Token'
                     self.assertEqual(result['message'], expected)
 
+    @unittest.skip("Turso-only: local-file migration path removed; "
+                   "this test backed up a local SQLite file and patched "
+                   "web_outlook_app.DATABASE, neither of which exists anymore.")
     def test_refresh_rotation_migration_preserves_unknown_legacy_results(self):
         with tempfile.TemporaryDirectory() as root:
             database_path = os.path.join(root, 'legacy.db')

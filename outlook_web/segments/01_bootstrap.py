@@ -44,7 +44,8 @@ import requests
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from outlook_web.runtime import default_database_path, resource_path, resolve_secret_key, runtime_root
+from outlook_web.runtime import resource_path, resolve_secret_key, runtime_root
+from outlook_web.turso_db import connect_database, masked_turso_url
 from outlook_web.mail_datetime import parse_mail_datetime
 
 # 尝试导入 Flask-WTF CSRF 保护
@@ -714,8 +715,8 @@ FORWARD_CHANNEL_WECOM_SETTING = "wecom"
 FORWARD_CHANNEL_FEISHU_SETTING = "feishu"
 SMTP_FORWARD_PROVIDERS = ('outlook', 'qq', '163', '126', 'yahoo', 'aliyun', 'custom')
 
-# 数据库文件
-DATABASE = os.getenv("DATABASE_PATH", str(default_database_path()))
+# 数据库: 仅 Turso 外部数据库（见 outlook_web/turso_db.py）。
+# 本地 SQLite 模式已移除；所有连接统一走 connect_database()。
 
 SKIN_CLASSIC_ID = 'classic'
 SKIN_SOURCE_BUILTIN = 'builtin'
@@ -1230,12 +1231,11 @@ def get_response_details(response: requests.Response) -> Any:
 # ==================== 数据库操作 ====================
 
 def get_db():
-    """获取数据库连接"""
+    """获取数据库连接（Turso，行默认支持列名访问）"""
     db = getattr(g, '_database', None)
     if db is None:
-        db = g._database = sqlite3.connect(DATABASE)
+        db = g._database = connect_database()
         db.execute('PRAGMA foreign_keys = ON')
-        db.row_factory = sqlite3.Row
     return db
 
 
@@ -1326,7 +1326,7 @@ def normalize_group_sort_orders_on_startup(cursor) -> None:
 
 def init_db():
     """初始化数据库"""
-    conn = sqlite3.connect(DATABASE)
+    conn = connect_database()
     conn.execute('PRAGMA foreign_keys = ON')
     cursor = conn.cursor()
     
@@ -2609,18 +2609,13 @@ def migrate_sensitive_data(conn):
 # ==================== 应用初始化 ====================
 
 def init_app():
-    """初始化应用（确保目录和数据库存在）"""
-    # 确保数据目录存在
-    data_dir = os.path.dirname(DATABASE)
-    if data_dir:
-        os.makedirs(data_dir, exist_ok=True)
-    
-    # 初始化数据库
+    """初始化应用（连接 Turso 并初始化表结构）"""
+    # 初始化数据库（Turso；未配置时直接报错，不建本地库）
     init_db()
-    
+
     print("=" * 60)
     print("Outlook 邮件 Web 应用已初始化")
-    print(f"数据库文件: {DATABASE}")
+    print(f"数据库: Turso ({masked_turso_url()})")
     print(f"运行目录: {runtime_root()}")
     print(f"GPTMail API: {GPTMAIL_BASE_URL}")
     print(f"DuckMail API: {DUCKMAIL_BASE_URL}")
@@ -2762,7 +2757,9 @@ def normalize_skin_id(value: str) -> str:
 
 
 def get_skin_data_root() -> Path:
-    root = Path(DATABASE).expanduser().resolve().parent / 'skins'
+    # 皮肤仍存本地 data/skins（与原来数据库文件所在目录一致），
+    # 只是不再从数据库文件路径推导。
+    root = runtime_root() / "data" / 'skins'
     root.mkdir(parents=True, exist_ok=True)
     return root
 

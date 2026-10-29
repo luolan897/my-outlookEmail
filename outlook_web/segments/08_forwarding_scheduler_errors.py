@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from werkzeug.exceptions import HTTPException
 
+from outlook_web.turso_db import connect_database
+
 if TYPE_CHECKING:
     # These segmented files are executed into the shared `web_outlook_app`
     # globals at runtime. Importing from the assembled module keeps IDE
@@ -648,10 +650,9 @@ def fetch_forward_detail(account: Dict[str, Any], message_id: str, folder: str =
 
 
 def open_forwarding_db_connection():
-    conn = sqlite3.connect(DATABASE, timeout=30)
+    conn = connect_database()
     conn.execute('PRAGMA foreign_keys = ON')
     conn.execute('PRAGMA busy_timeout = 5000')
-    conn.row_factory = sqlite3.Row
     return conn
 
 

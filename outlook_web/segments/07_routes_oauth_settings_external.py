@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+
+from outlook_web.turso_db import connect_database
 import time
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -454,9 +456,20 @@ def start_normal_mail_retention_clear_operation():
 
 
 def get_normal_mail_retention_db_file_bytes() -> int:
-    if not DATABASE or not os.path.exists(DATABASE):
+    # Turso-only: there is no local file to stat. Approximate the database
+    # size from SQLite page statistics (page_count * page_size); 0 on error.
+    try:
+        conn = connect_database()
+        try:
+            page_count = conn.execute("PRAGMA page_count").fetchone()
+            page_size = conn.execute("PRAGMA page_size").fetchone()
+            if not page_count or not page_size:
+                return 0
+            return max(0, int(page_count[0]) * int(page_size[0]))
+        finally:
+            conn.close()
+    except Exception:
         return 0
-    return max(0, int(os.path.getsize(DATABASE)))
 
 
 NORMAL_MAIL_RETENTION_SIZE_SQL_TERMS = tuple(
