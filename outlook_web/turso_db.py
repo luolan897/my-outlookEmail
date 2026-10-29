@@ -245,6 +245,21 @@ class Cursor:
             raise _translate_error(exc) from exc
         return self._wrap_many(rows)
 
+    def __iter__(self):
+        """Iterate rows lazily, like sqlite3.Cursor.
+
+        sqlite3 cursors are directly iterable, and application code relies
+        on it (e.g. ``{row[1] for row in db.execute('PRAGMA ...')}``).
+        Yielding via fetchone keeps iteration in step with fetchone/fetchall:
+        a partially consumed cursor continues from where it left off, and
+        fetchall after partial iteration returns only the remainder.
+        """
+        while True:
+            row = self.fetchone()
+            if row is None:
+                return
+            yield row
+
     @property
     def lastrowid(self):
         return self._cursor.lastrowid
