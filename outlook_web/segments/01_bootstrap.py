@@ -47,6 +47,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from outlook_web.runtime import resource_path, resolve_secret_key, runtime_root
 from outlook_web.turso_db import connect_database, masked_turso_url
 from outlook_web.mail_datetime import parse_mail_datetime
+import outlook_web.forwarding_store as forwarding_store
 
 # 尝试导入 Flask-WTF CSRF 保护
 try:
@@ -743,6 +744,9 @@ INDEX_CSS_FILES = (
     'css/index/07-meta.css',
     'css/index/08-responsive.css',
     'css/index/09-icloud.css',
+    'css/index/forwarding/tokens.css',
+    'css/index/forwarding/base.css',
+    'css/index/10-forwarding.css',
 )
 INDEX_JS_FILES = (
     'js/index/01-core.js',
@@ -759,6 +763,7 @@ INDEX_JS_FILES = (
     'js/index/12-outlook-upload-accounts.js',
     'js/index/13-projects.js',
     'js/index/14-icloud.js',
+    'js/index/15-forwarding.js',
 )
 
 # GPTMail API 配置
@@ -2534,6 +2539,13 @@ def init_db():
 
     from outlook_web.icloud_store import init_icloud_schema
     init_icloud_schema(conn)
+
+    try:
+        forwarding_store.init_schema(conn, encrypt_data, decrypt_data)
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
 
     conn.commit()
     conn.close()

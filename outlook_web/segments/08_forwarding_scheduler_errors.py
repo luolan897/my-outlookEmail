@@ -7,7 +7,7 @@ import math
 
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from email.utils import parsedate_to_datetime
+from email.utils import getaddresses, parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from werkzeug.exceptions import HTTPException
@@ -56,30 +56,7 @@ def get_bool_setting(key: str, default: bool = False) -> bool:
 
 
 def normalize_forward_channel_settings(raw_channels: Any) -> list[str]:
-    if isinstance(raw_channels, str):
-        values = raw_channels.split(',')
-    elif isinstance(raw_channels, (list, tuple, set)):
-        values = list(raw_channels)
-    else:
-        values = []
-
-    normalized = []
-    channel_aliases = {
-        'email': FORWARD_CHANNEL_SMTP_SETTING,
-        'smtp': FORWARD_CHANNEL_SMTP_SETTING,
-        'tg': FORWARD_CHANNEL_TG_SETTING,
-        'telegram': FORWARD_CHANNEL_TG_SETTING,
-        'wecom': FORWARD_CHANNEL_WECOM_SETTING,
-        'wechatwork': FORWARD_CHANNEL_WECOM_SETTING,
-        'qywx': FORWARD_CHANNEL_WECOM_SETTING,
-        'feishu': FORWARD_CHANNEL_FEISHU_SETTING,
-    }
-
-    for item in values:
-        channel = channel_aliases.get(str(item).strip().lower())
-        if channel and channel not in normalized:
-            normalized.append(channel)
-    return normalized
+    return forwarding_store.normalize_channel_selection(raw_channels)
 
 
 def normalize_smtp_forward_provider(value: str) -> str:
@@ -226,7 +203,9 @@ def stringify_forward_error(error: Any) -> str:
     return sanitize_error_details(str(error))[:500]
 
 
-def send_forward_email(subject: str, body_text: str, body_html: str = '') -> bool:
+def send_forward_email(subject: str, body_text: str, body_html: str = '', config=None) -> bool:
+    if config is not None:
+        return send_forward_email_with_config(config, subject, body_text, body_html)
     recipient = get_setting('email_forward_recipient', '').strip()
     host = get_setting('smtp_host', '').strip()
     if not recipient or not host:
@@ -317,11 +296,14 @@ def _send_telegram_message(bot_token: str, chat_id: str, topic_id: str, proxy_ur
         json=payload,
         timeout=15,
         proxy_url=proxy_url,
+        sensitive_url=True,
     )
     return response.ok
 
 
-def send_forward_telegram(text: str) -> bool:
+def send_forward_telegram(text: str, config=None) -> bool:
+    if config is not None:
+        return send_forward_telegram_with_config(config, text)
     return _send_telegram_message(
         get_setting_decrypted('telegram_bot_token', '').strip(),
         get_setting('telegram_chat_id', '').strip(),
@@ -341,7 +323,9 @@ def send_forward_telegram_with_config(config: Dict[str, Any], text: str) -> bool
     )
 
 
-def send_forward_wecom(text: str) -> bool:
+def send_forward_wecom(text: str, config=None) -> bool:
+    if config is not None:
+        return send_forward_wecom_with_config(config, text)
     webhook_url = get_setting_decrypted('wecom_webhook_url', '').strip()
     if not webhook_url:
         return False
@@ -354,6 +338,7 @@ def send_forward_wecom(text: str) -> bool:
             },
         },
         timeout=15,
+        sensitive_url=True,
     )
     return response.ok
 
@@ -371,6 +356,7 @@ def send_forward_wecom_with_config(config: Dict[str, Any], text: str) -> bool:
             },
         },
         timeout=15,
+        sensitive_url=True,
     )
     return response.ok
 
@@ -390,20 +376,7 @@ def resolve_feishu_forward_config(config=None, *, require_webhook: bool = True) 
         config.get('sign_secret', '').strip() or get_setting_decrypted('feishu_sign_secret', '').strip()
     )
     if webhook_url:
-        try:
-            parsed = urlparse(webhook_url)
-            valid = (
-                parsed.scheme == 'https' and parsed.hostname == 'open.feishu.cn'
-                and parsed.port in (None, 443) and not parsed.username and not parsed.password
-                and not parsed.query and not parsed.fragment
-                and re.fullmatch(r'/open-apis/bot/v2/hook/[A-Za-z0-9_-]+', parsed.path)
-                and not re.search(r'\s', webhook_url)
-            )
-        except ValueError:
-            valid = False
-        if not valid:
-            raise ValueError('飞书 Webhook 必须是有效的 https://open.feishu.cn/open-apis/bot/v2/hook/ 地址')
-        webhook_url = f'https://open.feishu.cn{parsed.path}'
+        webhook_url = forwarding_store.normalize_feishu_url(webhook_url)
     elif require_webhook:
         raise ValueError('请先填写飞书 Webhook 地址')
     return {'webhook_url': webhook_url, 'sign_secret': sign_secret}
@@ -516,7 +489,9 @@ def _send_feishu_message(config: Dict[str, str], text: str) -> bool:
     raise ValueError(errors.get(code, f'飞书发送失败（业务码 {code}）'))
 
 
-def send_forward_feishu(text: str) -> bool:
+def send_forward_feishu(text: str, config=None) -> bool:
+    if config is not None:
+        return _send_feishu_message(config, text)
     return _send_feishu_message(resolve_feishu_forward_config(), text)
 
 
@@ -525,14 +500,7 @@ def send_forward_feishu_with_config(config: Dict[str, Any], text: str) -> bool:
 
 
 def normalize_forward_keywords(value: str) -> list[str]:
-    keywords = []
-    seen = set()
-    for line in value.splitlines():
-        keyword = line.strip()
-        if keyword and keyword.casefold() not in seen:
-            keywords.append(keyword)
-            seen.add(keyword.casefold())
-    return keywords
+    return forwarding_store.normalize_keywords(value).splitlines()
 
 
 def forward_email_matches_keywords(email_detail: Dict[str, Any], keywords: list[str]) -> bool:
@@ -544,6 +512,21 @@ def forward_email_matches_keywords(email_detail: Dict[str, Any], keywords: list[
         body = html.unescape(strip_html_content(body))
     body = ' '.join(body.split()).casefold()
     return any(keyword.casefold() in subject or keyword.casefold() in body for keyword in keywords)
+
+
+def forward_email_matches_policy(email_detail: Dict[str, Any], route: Dict[str, Any]) -> bool:
+    if not forward_email_matches_keywords(email_detail, normalize_forward_keywords(route.get('keywords', ''))):
+        return False
+    senders = set(route.get('senders', '').splitlines())
+    if not senders:
+        return True
+    for _, address in getaddresses([str(email_detail.get('from') or '')]):
+        try:
+            if forwarding_store.normalize_address(address) in senders:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def build_forward_payload(account: Dict[str, Any], email_detail: Dict[str, Any]) -> tuple[str, str, str, str]:
@@ -668,6 +651,7 @@ def decrypt_forwarding_account_secrets(account: Dict[str, Any]) -> Dict[str, Any
 
 
 def build_forwarding_job_config() -> Dict[str, Any]:
+    sync_legacy_forwarding(update_associations=False)
     forward_channels = set(get_forward_channels())
     execution_mode = normalize_forward_execution_mode()
     try:
@@ -677,6 +661,8 @@ def build_forwarding_job_config() -> Dict[str, Any]:
     account_delay_seconds = 0 if execution_mode == 'parallel' else get_forward_account_delay_seconds()
 
     return {
+        'source_routing': True,
+        'has_source_targets': bool(get_db().execute("SELECT 1 FROM forwarding_policy_channels c JOIN forwarding_policies p ON p.id=c.policy_id WHERE p.mode='custom' LIMIT 1").fetchone()),
         'email_enabled': FORWARD_CHANNEL_SMTP_SETTING in forward_channels and bool(
             get_setting('email_forward_recipient', '').strip() and get_setting('smtp_host', '').strip()
         ),
@@ -703,7 +689,7 @@ def get_forwarding_enabled_accounts() -> list[Dict[str, Any]]:
     conn = open_forwarding_db_connection()
     try:
         rows = conn.execute(
-            "SELECT * FROM accounts WHERE status = 'active' AND forward_enabled = 1"
+            "SELECT * FROM accounts WHERE status = 'active'"
         ).fetchall()
         return [dict(row) for row in rows]
     finally:
@@ -814,6 +800,10 @@ def process_forwarding_account(account_row: Dict[str, Any], job_config: Dict[str
         account_started = time.monotonic()
         conn = open_forwarding_db_connection()
         try:
+            if job_config.get('source_routing'):
+                route = forwarding_store.resolve_policy(conn, account_id=account['id'])
+                if not route['eligible'] or route['mode'] != 'custom':
+                    return result
             cursor_time = parse_email_datetime(account.get('forward_last_checked_at', ''))
             folders_to_scan = ['inbox']
             if job_config.get('include_junkemail'):
@@ -913,9 +903,14 @@ def process_forwarding_account(account_row: Dict[str, Any], job_config: Dict[str
                     )
                     continue
 
-                if not forward_email_matches_keywords(detail, job_config.get('keywords', [])):
+                if job_config.get('source_routing'):
+                    route = forwarding_store.resolve_policy(conn, account_id=account['id'])
+                    matches = forward_email_matches_policy(detail, route)
+                else:
+                    matches = forward_email_matches_keywords(detail, job_config.get('keywords', []))
+                if not matches:
                     app.logger.info(
-                        '[forward] skip email not matching keywords: account=%s message_id=%s',
+                        '[forward] skip email not matching rule filters: account=%s message_id=%s',
                         account.get('email', ''), item.get('id', ''),
                     )
                     if item_time and (latest_success_time is None or item_time > latest_success_time):
@@ -925,6 +920,19 @@ def process_forwarding_account(account_row: Dict[str, Any], job_config: Dict[str
                 title, plain, html_body, telegram_text = build_forward_payload(account, detail)
                 message_processed = False
                 message_failed = False
+
+                if job_config.get('source_routing'):
+                    event_id = enqueue_forwarding_event(
+                        conn, route, detail['id'], item_time.timestamp() if item_time else time.time(),
+                        (title, plain, html_body, telegram_text), account.get('email', ''), account.get('group_id'),
+                    )
+                    conn.commit()
+                    message_processed, message_failed = process_forwarding_event(conn, event_id, result)
+                    if message_failed:
+                        result['had_processing_failure'] = True
+                    elif message_processed and item_time and (latest_success_time is None or item_time > latest_success_time):
+                        latest_success_time = item_time
+                    continue
 
                 channels = (
                     ('email', FORWARD_CHANNEL_EMAIL, send_forward_email, (title, plain, html_body)),
@@ -1070,15 +1078,19 @@ def process_forwarding_job():
     with app.app_context():
         try:
             job_config = build_forwarding_job_config()
+            if job_config.get('source_routing'):
+                reconcile_forwarding_deliveries()
             if not (
                 job_config['email_enabled']
                 or job_config['telegram_enabled']
                 or job_config['wecom_enabled']
                 or job_config.get('feishu_enabled')
+                or job_config.get('has_source_targets')
             ):
                 safe_console_print('[forward] skip job: no active channels configured')
                 return {'success': True, 'skipped': True, 'reason': 'no_active_channels'}
 
+            retries = retry_forwarding_deliveries() if job_config.get('source_routing') else None
             accounts = get_forwarding_enabled_accounts()
             execution_mode = job_config.get('execution_mode', 'serial')
             safe_console_print(
@@ -1093,12 +1105,23 @@ def process_forwarding_job():
                 f"account_delay_seconds={job_config['account_delay_seconds']}"
             )
 
-            if execution_mode == 'parallel':
+            cf_results = []
+            workers = get_cloudflare_forwarding_workers() if job_config.get('source_routing') else []
+            if execution_mode == 'parallel' and workers:
+                results, cf_results = run_forwarding_sources_parallel(accounts, workers, job_config)
+            elif execution_mode == 'parallel':
                 results = run_forwarding_accounts_parallel(accounts, job_config)
             else:
                 results = run_forwarding_accounts_serial(accounts, job_config)
+            if workers and execution_mode != 'parallel':
+                cf_results = [process_cloudflare_forwarding_worker(worker, job_config) for worker in workers]
 
             summary = summarize_forwarding_results(results)
+            if job_config.get('source_routing'):
+                summary['cloudflare'] = cf_results
+                for key in ('email_success_count', 'telegram_success_count', 'wecom_success_count', 'feishu_success_count'):
+                    summary[key] += int(retries.get(key, 0)) + sum(int(r.get(key, 0)) for r in cf_results)
+                summary['failed_count'] += retries['failed_count'] + sum(int(r.get('had_processing_failure', False)) for r in cf_results)
             safe_console_print(
                 "[forward] job done: "
                 f"accounts={len(accounts)} "
