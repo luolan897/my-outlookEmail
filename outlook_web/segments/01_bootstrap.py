@@ -47,6 +47,9 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from outlook_web.runtime import resource_path, resolve_secret_key, runtime_root
 from outlook_web.turso_db import connect_database, masked_turso_url
 from outlook_web.mail_datetime import parse_mail_datetime
+
+# 进程启动时间戳（供 /healthz 上报存活时长；模块导入即进程启动）
+_PROCESS_START_TIME = time.time()
 import outlook_web.forwarding_store as forwarding_store
 
 # 尝试导入 Flask-WTF CSRF 保护

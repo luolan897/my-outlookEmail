@@ -33,4 +33,4 @@ EXPOSE 5000
 
 # 启动应用（gunicorn 线程模型，单 worker 多线程）
 # 超时等参数通过环境变量注入，无需硬编码在镜像中
-CMD ["sh", "-c", "gunicorn -k gthread -w 1 --threads ${GUNICORN_THREADS:-4} -b 0.0.0.0:5000 --timeout ${GUNICORN_TIMEOUT:-300} --graceful-timeout 30 --access-logfile - --error-logfile - --capture-output web_outlook_app:app"]
+CMD ["sh", "-c", "gunicorn -k gthread -w 1 --threads ${GUNICORN_THREADS:-8} -b 0.0.0.0:5000 --timeout ${GUNICORN_TIMEOUT:-300} --graceful-timeout 30 --max-requests ${GUNICORN_MAX_REQUESTS:-500} --max-requests-jitter 100 --access-logfile - --error-logfile - --capture-output web_outlook_app:app"]
