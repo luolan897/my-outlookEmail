@@ -647,6 +647,7 @@ def decrypt_forwarding_account_secrets(account: Dict[str, Any]) -> Dict[str, Any
             account[field_name] = decrypt_data(account[field_name])
         except Exception:
             pass
+    register_account_graph_token_scope_preference(account)
     return account
 
 
@@ -1725,6 +1726,10 @@ def api_update_account_v2(account_id):
             return jsonify({'success': False, 'error': str(exc)})
     else:
         authorization_type = get_account_authorization_type(current_account)
+    graph_token_scope = (
+        normalize_graph_token_scope(data.get('graph_token_scope'))
+        if 'graph_token_scope' in data else None
+    )
     imap_host = (data.get('imap_host', '') or '').strip()
     imap_password = data['imap_password'] if 'imap_password' in data else current_account.get('imap_password', '')
     group_id = data.get('group_id', 1)
@@ -1804,7 +1809,8 @@ def api_update_account_v2(account_id):
         proxy_url,
         fallback_proxy_url_1,
         fallback_proxy_url_2,
-        authorization_type
+        authorization_type,
+        graph_token_scope
     ):
         cleaned_aliases = get_account_aliases(account_id)
         db = get_db()

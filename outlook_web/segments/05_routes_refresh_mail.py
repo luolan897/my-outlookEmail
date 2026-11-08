@@ -2106,7 +2106,10 @@ def is_graph_delete_reauthorization_error(status_code: Any, error_body: Any) -> 
 def delete_emails_graph(client_id: str, refresh_token: str, message_ids: List[str], proxy_url: str = None,
                         fallback_proxy_urls: List[str] = None) -> Dict[str, Any]:
     """通过 Graph API 批量删除邮件（永久删除）"""
-    access_token = get_access_token_graph(client_id, refresh_token, proxy_url, fallback_proxy_urls)
+    access_token = get_access_token_graph(
+        client_id, refresh_token, proxy_url, fallback_proxy_urls,
+        required_scope='https://graph.microsoft.com/Mail.ReadWrite',
+    )
     if not access_token:
         return {
             "success": False,
@@ -3087,6 +3090,7 @@ def fetch_imap_account_detail_response(account: Dict[str, Any], folder: str,
         account.get('provider', 'custom'),
         proxy_url,
         strict_id_mode=strict_id_mode,
+        preferred_id_mode=id_mode or 'uid',
     )
     if detail_result.get('success'):
         return build_retained_detail_success_response(
@@ -4206,6 +4210,9 @@ def api_get_raw_email(email_addr, message_id):
         return jsonify({'success': False, 'error': '账号不存在'})
 
     method = request.args.get('method', 'graph')
+    id_mode = str(request.args.get('id_mode') or '').strip().lower()
+    if id_mode == 'sequence':
+        return jsonify(imap_identity_error_result(ImapMessageIdentityError()))
     folder = normalize_folder_name(request.args.get('folder', 'inbox'))
     proxy_url = get_account_proxy_url(account)
     fallback_proxy_urls = get_account_proxy_failover_urls(account)
@@ -4220,7 +4227,8 @@ def api_get_raw_email(email_addr, message_id):
             message_id,
             folder,
             account.get('provider', 'custom'),
-            proxy_url
+            proxy_url,
+            preferred_id_mode=id_mode or 'uid',
         )
     elif method == 'graph':
         raw_content = get_raw_email_graph(
@@ -4290,6 +4298,8 @@ def normalize_email_detail_error(error: Any, fallback_message: str = '获取邮�
 def fetch_email_detail_for_account(account, message_id, method='graph', folder='inbox',
                                    id_mode='', prefer_local=False, strict_id_mode=False,
                                    force_method=False):
+    if str(id_mode or '').strip().lower() == 'sequence':
+        return imap_identity_error_result(ImapMessageIdentityError())
     if account.get('icloud_address'):
         primary = dict(account)
         address = primary.pop('icloud_address')
@@ -4407,7 +4417,8 @@ def download_email_attachment_for_account(account, method, message_id, attachmen
             attachment_id,
             folder,
             account.get('provider', 'custom'),
-            proxy_url
+            proxy_url,
+            preferred_id_mode=id_mode or 'uid',
         )
 
     if method == 'graph':
@@ -4447,7 +4458,8 @@ def get_email_attachment_metadata_for_download(account, method, message_id, fold
             message_id,
             folder,
             account.get('provider', 'custom'),
-            proxy_url
+            proxy_url,
+            preferred_id_mode=id_mode or 'uid',
         )
         if detail_result.get('success'):
             return {'success': True, 'attachments': detail_result.get('email', {}).get('attachments', [])}

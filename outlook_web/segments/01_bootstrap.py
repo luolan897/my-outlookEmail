@@ -1375,6 +1375,7 @@ def init_db():
             account_type TEXT DEFAULT 'outlook',
             provider TEXT DEFAULT 'outlook',
             authorization_type TEXT NOT NULL DEFAULT '',
+            graph_token_scope TEXT NOT NULL DEFAULT '',
             imap_host TEXT,
             imap_port INTEGER DEFAULT 993,
             imap_password TEXT,
@@ -1872,6 +1873,8 @@ def init_db():
         cursor.execute("ALTER TABLE accounts ADD COLUMN provider TEXT DEFAULT 'outlook'")
     if 'authorization_type' not in columns:
         cursor.execute("ALTER TABLE accounts ADD COLUMN authorization_type TEXT NOT NULL DEFAULT ''")
+    if 'graph_token_scope' not in columns:
+        cursor.execute("ALTER TABLE accounts ADD COLUMN graph_token_scope TEXT NOT NULL DEFAULT ''")
     if 'imap_host' not in columns:
         cursor.execute('ALTER TABLE accounts ADD COLUMN imap_host TEXT')
     if 'imap_port' not in columns:
@@ -1935,6 +1938,17 @@ def init_db():
     retained_normal_mail_columns = {row[1] for row in cursor.fetchall()}
     if 'received_at_sort' not in retained_normal_mail_columns:
         cursor.execute('ALTER TABLE retained_normal_mail_messages ADD COLUMN received_at_sort REAL DEFAULT 0')
+
+    if not cursor.execute("SELECT 1 FROM settings WHERE key = 'imap_uid_identity_cache_migrated'").fetchone():
+        # 旧 IMAP 缓存可能已错配：失效后重新同步，保留原始正文记录供恢复。
+        cursor.execute('''
+            UPDATE retained_normal_mail_messages
+            SET list_cached = 0, body_cached = 0, body_preview = ''
+            WHERE id_mode = 'sequence'
+               OR (id_mode = 'uid' AND provider_message_id NOT LIKE 'imap:%')
+               OR (id_mode = '' AND account_id IN (SELECT id FROM accounts WHERE account_type = 'imap'))
+        ''')
+        cursor.execute("INSERT INTO settings (key, value) VALUES ('imap_uid_identity_cache_migrated', '1')")
 
     cursor.execute("PRAGMA table_info(project_accounts)")
     project_account_columns = [col[1] for col in cursor.fetchall()]
