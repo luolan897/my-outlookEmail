@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """重置 Web 登录密码（忘记密码时的官方运维入口）。
 
-不需要旧密码；需要能访问数据库文件的主机权限。
+不需要旧密码；需要 Turso 数据库配置（环境变量 TURSO_DATABASE_URL
+与 TURSO_AUTH_TOKEN，可写进项目 .env 或 .env.local）。
 仅支持交互式终端输入新密码（不提供 --password / stdin 密码通道）。
 
 与 Web 应用行为对齐：
@@ -12,7 +13,8 @@
 
 用法:
   python scripts/reset_login_password.py
-  DATABASE_PATH=/path/to/outlook_accounts.db python scripts/reset_login_password.py
+  TURSO_DATABASE_URL=libsql://<db>-<org>.turso.io TURSO_AUTH_TOKEN=<token> \
+      python scripts/reset_login_password.py
 
 Docker 示例:
   docker exec -it <container> python scripts/reset_login_password.py
@@ -27,13 +29,12 @@ import secrets
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 # 与 outlook_web/segments/01_bootstrap.py / 设置页改密保持一致
 MIN_PASSWORD_LENGTH = 8
 LOGIN_PASSWORD_KEY = "login_password"
 LOGIN_SESSION_VERSION_KEY = "login_session_version"
-DEFAULT_DATABASE_RELATIVE = Path("data") / "outlook_accounts.db"
 
 
 class ResetError(Exception):
@@ -66,12 +67,12 @@ def load_dotenv_file(path: Path) -> None:
         os.environ[key] = value
 
 
-def resolve_database_path() -> Path:
-    """与应用一致：优先 DATABASE_PATH，否则项目 data/outlook_accounts.db。"""
-    env_value = (os.getenv("DATABASE_PATH") or "").strip()
-    if env_value:
-        return Path(env_value).expanduser().resolve()
-    return (project_root() / DEFAULT_DATABASE_RELATIVE).resolve()
+def connect_database():
+    """连接 Turso 数据库（与 Web 应用同一入口；未配置时直接报错）。"""
+    sys.path.insert(0, str(project_root()))
+    from outlook_web.turso_db import connect_database as _connect
+
+    return _connect()
 
 
 def hash_password(password: str) -> str:
@@ -142,7 +143,7 @@ def prompt_new_password() -> str:
     return password
 
 
-def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+def _table_exists(conn: Any, name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
         (name,),
@@ -150,7 +151,7 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     return row is not None
 
 
-def _upsert_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
+def _upsert_setting(conn: Any, key: str, value: str) -> None:
     conn.execute(
         """
         INSERT OR REPLACE INTO settings (key, value, updated_at)
@@ -160,7 +161,7 @@ def _upsert_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
     )
 
 
-def _get_setting(conn: sqlite3.Connection, key: str) -> Optional[str]:
+def _get_setting(conn: Any, key: str) -> Optional[str]:
     row = conn.execute(
         "SELECT value FROM settings WHERE key = ?",
         (key,),
@@ -170,7 +171,7 @@ def _get_setting(conn: sqlite3.Connection, key: str) -> Optional[str]:
     return row[0]
 
 
-def write_audit_log(conn: sqlite3.Connection, details: str) -> None:
+def write_audit_log(conn: Any, details: str) -> None:
     """写入审计日志；表不存在或失败时静默跳过（与应用 log_audit 一致）。"""
     if not _table_exists(conn, "audit_logs"):
         return
@@ -192,34 +193,28 @@ def write_audit_log(conn: sqlite3.Connection, details: str) -> None:
         pass
 
 
-def reset_login_password(db_path: Path, new_password: str) -> Tuple[str, str]:
-    """将新密码写入数据库并轮换会话版本。
+def reset_login_password(new_password: str) -> Tuple[str, str]:
+    """将新密码写入 Turso 数据库并轮换会话版本。
 
     :return: (bcrypt_hash, new_session_version)
-    :raises ResetError: 路径/库结构/策略校验失败（不写库）
+    :raises ResetError: 配置/库结构/策略校验失败（不写库）
     """
     error = validate_new_password(new_password, new_password)
     if error:
         raise ResetError(error)
 
-    if not db_path.is_file():
-        raise ResetError(
-            f"数据库文件不存在: {db_path}\n"
-            "请确认 DATABASE_PATH 或默认 data/outlook_accounts.db 是否正确。"
-        )
-
     hashed = hash_password(new_password)
     new_version = secrets.token_urlsafe(24)
 
     try:
-        conn = sqlite3.connect(str(db_path))
-    except sqlite3.Error as exc:
-        raise ResetError(f"无法打开数据库: {db_path} ({exc})") from exc
+        conn = connect_database()
+    except Exception as exc:
+        raise ResetError(f"无法连接 Turso 数据库: {exc}") from exc
 
     try:
         if not _table_exists(conn, "settings"):
             raise ResetError(
-                f"数据库缺少 settings 表，不是有效的 OutlookEmail 库: {db_path}"
+                "数据库缺少 settings 表，不是有效的 OutlookEmail 库。"
             )
         _upsert_setting(conn, LOGIN_PASSWORD_KEY, hashed)
         _upsert_setting(conn, LOGIN_SESSION_VERSION_KEY, new_version)
@@ -256,7 +251,7 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[list] = None) -> int:
-    # 先加载项目 .env，便于本地 DATABASE_PATH 与应用一致
+    # 先加载项目 .env，便于加载 TURSO 配置
     load_dotenv_file(project_root() / ".env")
     load_dotenv_file(project_root() / ".env.local")
 
@@ -266,22 +261,14 @@ def main(argv: Optional[list] = None) -> int:
         code = exc.code
         return int(code) if isinstance(code, int) else 1
 
-    db_path = resolve_database_path()
-    print(f"数据库: {db_path}")
+    print("数据库: Turso（TURSO_DATABASE_URL / TURSO_AUTH_TOKEN）")
     print("说明: 重置不需要旧密码；成功后所有已登录会话将失效。")
     print("建议: 若服务正在运行，可先停止再重置（非强制）。")
     print("-" * 40)
 
-    if not db_path.is_file():
-        print(
-            f"错误: 数据库文件不存在: {db_path}",
-            file=sys.stderr,
-        )
-        return 1
-
     try:
         new_password = prompt_new_password()
-        _hashed, _version = reset_login_password(db_path, new_password)
+        _hashed, _version = reset_login_password(new_password)
     except ResetError as exc:
         print(f"错误: {exc}", file=sys.stderr)
         return 1

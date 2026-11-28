@@ -59,7 +59,9 @@ def manager(tmp_path):
     init_icloud_schema(db)
     db.commit(); db.close()
     cipher = Fernet(Fernet.generate_key())
-    result = ICloudManager(path, lambda: cipher, FakeClient, clock=lambda: 1000)
+    # ICloudManager now takes a connection factory (not a path); this test
+    # fixture keeps an isolated local file as its factory target.
+    result = ICloudManager(lambda: sqlite3.connect(path), lambda: cipher, FakeClient, clock=lambda: 1000)
     FakeClient.failure = None; FakeClient.before_return = None; FakeClient.mutations = []
     with result.store() as store:
         account = store.save_account({'apple_id': 'test@example.com', 'region': 'global', 'mailbox_account_id': 1})

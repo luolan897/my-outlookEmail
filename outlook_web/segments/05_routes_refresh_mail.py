@@ -1,5 +1,6 @@
 from __future__ import annotations
 from outlook_web.icloud_mail import belongs_to, recipient_addresses
+from outlook_web.turso_db import connect_database
 
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
@@ -1393,9 +1394,8 @@ def run_full_refresh(snapshot_trigger_type: str, log_refresh_type: str,
                      due_only: bool = False) -> Dict[str, Any]:
     lock_acquired = False
     owns_connection = db_conn is None
-    conn = db_conn or sqlite3.connect(DATABASE)
+    conn = db_conn or connect_database()
     conn.execute('PRAGMA foreign_keys = ON')
-    conn.row_factory = sqlite3.Row
     accounts: List[sqlite3.Row] = []
     delay_seconds = 0
     total = 0
@@ -1590,9 +1590,8 @@ def stream_full_refresh_events(snapshot_trigger_type: str, log_refresh_type: str
         acquire_token_refresh_run_lock()
         lock_acquired = True
         clear_token_refresh_stop_request()
-        conn = sqlite3.connect(DATABASE)
+        conn = connect_database()
         conn.execute('PRAGMA foreign_keys = ON')
-        conn.row_factory = sqlite3.Row
 
         cleanup_refresh_logs(conn)
         conn.commit()
@@ -1731,9 +1730,8 @@ def stream_failed_refresh_events():
         acquire_token_refresh_run_lock()
         lock_acquired = True
         clear_token_refresh_stop_request()
-        conn = sqlite3.connect(DATABASE)
+        conn = connect_database()
         conn.execute('PRAGMA foreign_keys = ON')
-        conn.row_factory = sqlite3.Row
 
         cleanup_refresh_logs(conn)
         conn.commit()
@@ -1910,9 +1908,8 @@ def stream_selected_refresh_events(account_ids: List[int]):
         acquire_token_refresh_run_lock()
         lock_acquired = True
         clear_token_refresh_stop_request()
-        conn = sqlite3.connect(DATABASE)
+        conn = connect_database()
         conn.execute('PRAGMA foreign_keys = ON')
-        conn.row_factory = sqlite3.Row
 
         cleanup_refresh_logs(conn)
         conn.commit()

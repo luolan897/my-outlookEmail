@@ -189,6 +189,21 @@ def active_skin_css():
     return response
 
 
+@app.route('/healthz', methods=['GET'])
+def healthz():
+    """健康检查：不鉴权、不碰数据库、不联网，进程活着就立刻回 200。
+
+    用途：区分“进程死了”还是“请求线程被长任务占满”；Render 健康检查
+    与保活 ping 都应打这个接口，别打首页（首页要鉴权 + 读库）。
+    """
+    return jsonify({
+        'status': 'ok',
+        'pid': os.getpid(),
+        'uptime_seconds': int(time.time() - _PROCESS_START_TIME),
+        'threads': threading.active_count(),
+    })
+
+
 @app.route('/')
 @login_required
 def index():

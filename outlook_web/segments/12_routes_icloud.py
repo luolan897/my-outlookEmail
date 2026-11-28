@@ -4,9 +4,10 @@ from outlook_web.icloud_manager import ICloudManager
 from outlook_web.icloud_protocol import AppleProtocolError
 from outlook_web.icloud_store import ICloudStore, ManagedAddressUnavailable
 from outlook_web.icloud_mail import scan_isolated_mail
+from outlook_web.turso_db import connect_database
 
 
-icloud_manager = ICloudManager(DATABASE, get_cipher, proxy_resolver=get_account_proxy_url)
+icloud_manager = ICloudManager(connect_database, get_cipher, proxy_resolver=get_account_proxy_url)
 
 
 def icloud_store():

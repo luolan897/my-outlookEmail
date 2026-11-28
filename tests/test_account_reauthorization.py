@@ -100,8 +100,7 @@ class AccountReauthorizationTests(unittest.TestCase):
         account_id = self._add_outlook_account()
 
         def fake_refresh(account, refresh_type='manual', db_conn=None):
-            with sqlite3.connect(web_outlook_app.DATABASE) as external_conn:
-                external_conn.row_factory = sqlite3.Row
+            with web_outlook_app.connect_database() as external_conn:
                 external_row = external_conn.execute(
                     '''
                     SELECT client_id, last_refresh_status, last_refresh_error

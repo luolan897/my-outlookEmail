@@ -14,8 +14,11 @@ from outlook_web.icloud_store import ICloudStore
 
 
 class ICloudManager:
-    def __init__(self, database, cipher_factory, client_factory=ICloudClient, clock=time.time, proxy_resolver=None):
-        self.database, self.cipher_factory = database, cipher_factory
+    def __init__(self, connect_factory, cipher_factory, client_factory=ICloudClient, clock=time.time, proxy_resolver=None):
+        # connect_factory: callable returning a database connection.
+        # The application passes the Turso connect function; tests may pass
+        # a factory returning an isolated local connection.
+        self.connect_factory, self.cipher_factory = connect_factory, cipher_factory
         self.client_factory, self.clock = client_factory, clock
         self.proxy_resolver = proxy_resolver
         self.scheduler = None
@@ -27,7 +30,7 @@ class ICloudManager:
 
     @contextmanager
     def store(self):
-        db = sqlite3.connect(self.database, timeout=10)
+        db = self.connect_factory()
         db.row_factory = sqlite3.Row
         db.execute('PRAGMA foreign_keys=ON')
         try:

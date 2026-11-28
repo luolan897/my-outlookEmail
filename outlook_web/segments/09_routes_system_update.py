@@ -86,9 +86,9 @@ def _docker_update_state_file_path() -> str:
     if override:
         target_path = os.path.abspath(override)
     else:
-        database_path = os.path.abspath(str(DATABASE or ''))
-        data_dir = os.path.dirname(database_path) if database_path else str(runtime_root())
-        target_path = os.path.join(data_dir, DOCKER_UPDATE_STATE_FILE_NAME)
+        # Turso-only: state file lives under the local data dir (the same
+        # place it used to land when derived from the database file's dir).
+        target_path = os.path.join(str(runtime_root() / "data"), DOCKER_UPDATE_STATE_FILE_NAME)
 
     parent_dir = os.path.dirname(target_path)
     if parent_dir:
